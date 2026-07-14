@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>TaskFlow</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.3.1/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.3.1/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.24.7/babel.min.js"></script>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  body { font-family: 'Inter', system-ui, -apple-system, sans-serif; }
+  @keyframes pop { 0% { transform: scale(1); } 40% { transform: scale(1.03); } 100% { transform: scale(1); } }
+  .task-pop { animation: pop 0.25s ease-out; }
+  @keyframes slideIn { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: translateY(0); } }
+  .task-enter { animation: slideIn 0.25s ease-out; }
+</style>
+</head>
+<body class="bg-slate-50 min-h-screen">
+<div id="root"></div>
+
+<script type="text/babel">
+const { useState, useEffect, useCallback } = React;
+
+const PRIORITY_STYLES = {
+  high:   { label: "High",   dot: "bg-rose-500",   badge: "bg-rose-50 text-rose-600 border-rose-200" },
+  medium: { label: "Medium", dot: "bg-amber-500",  badge: "bg-amber-50 text-amber-600 border-amber-200" },
+  low:    { label: "Low",    dot: "bg-emerald-500",badge: "bg-emerald-50 text-emerald-600 border-emerald-200" },
+};
+
+function ProgressBar({ percentage, completed, total }) {
+  return (
+    <div className="w-full">
+      <div className="flex justify-between items-baseline mb-2">
+        <span className="text-sm font-medium text-slate-500">
+          {completed} of {total} tasks done
+        </span>
+        <span className="text-sm font-semibold text-slate-700">{percentage}%</span>
+      </div>
+      <div className="w-full h-2.5 bg-slate-200 rounded-full overflow-hidden">
+        <div
+          className="h-full bg-gradient-to-r from-indigo-500 to-violet-500 rounded-full transition-all duration-500 ease-out"
+          style={{ width: `${percentage}%` }}
+        />
+      </div>
+    </div>
+  );
+}
+
+function TaskRow({ task, onToggle, onDelete }) {
+  const p = PRIORITY_STYLES[task.priority] || PRIORITY_STYLES.low;
+  return (
+    <li className="task-enter flex items-center gap-3 bg-white border border-slate-200 rounded-xl px-4 py-3 hover:shadow-sm transition-shadow">
+      <button
+        onClick={() => onToggle(task)}
+        className={`shrink-0 w-5 h-5 rounded-full border-2 flex items-center justify-center transition-colors ${
+          task.completed ? "bg-indigo-500 border-indigo-500" : "border-slate-300 hover:border-indigo-400"
+        }`}
+        aria-label="toggle complete"
+      >
+        {task.completed && (
+          <svg viewBox="0 0 20 20" fill="white" className="w-3 h-3">
+            <path d="M16.7 5.3a1 1 0 010 1.4l-7.4 7.4a1 1 0 01-1.4 0L3.3 9.5a1 1 0 111.4-1.4l3.9 3.9 6.7-6.7a1 1 0 011.4 0z" />
+          </svg>
+        )}
+      </button>
+
+      <span className={`flex-1 text-sm ${task.completed ? "line-through text-slate-400" : "text-slate-700"}`}>
+        {task.title}
+      </span>
+
+      <span className={`shrink-0 text-xs font-medium border px-2 py-0.5 rounded-full flex items-center gap-1 ${p.badge}`}>
+        <span className={`w-1.5 h-1.5 rounded-full ${p.dot}`} />
+        {p.label}
+      </span>
+
+      <button
+        onClick={() => onDelete(task.id)}
+        className="shrink-0 text-slate-300 hover:text-rose-500 transition-colors"
+        aria-label="delete task"
+      >
+        <svg viewBox="0 0 20 20" fill="currentColor" className="w-5 h-5">
+          <path fillRule="evenodd" d="M8.75 1A2.75 2.75 0 006 3.75v.25H3.5a.75.75 0 000 1.5h.6l.67 10.06A2.75 2.75 0 007.51 18h4.98a2.75 2.75 0 002.74-2.44l.67-10.06h.6a.75.75 0 000-1.5H14v-.25A2.75 2.75 0 0011.25 1h-2.5zM10 4.25c.966 0 1.75.784 1.75 1.75v.25h-3.5V6c0-.966.784-1.75 1.75-1.75z" clipRule="evenodd" />
+        </svg>
+      </button>
+    </li>
+  );
+}
+
+function App() {
+  const [tasks, setTasks] = useState([]);
+  const [stats, setStats] = useState({ total: 0, completed: 0, percentage: 0 });
+  const [input, setInput] = useState("");
+  const [error, setError] = useState("");
+  const [filter, setFilter] = useState("all");
+  const [loading, setLoading] = useState(true);
+
+  const fetchTasks = useCallback(async () => {
+    const res = await fetch("/api/tasks");
+    const data = await res.json();
+    setTasks(data.tasks);
+    setStats(data.stats);
+    setLoading(false);
+  }, []);
+
+  useEffect(() => { fetchTasks(); }, [fetchTasks]);
+
+  const addTask = async (e) => {
+    e.preventDefault();
+    const title = input.trim();
+    if (!title) return;
+
+    const res = await fetch("/api/tasks", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title }),
+    });
+    const data = await res.json();
+
+    if (!res.ok) {
+      setError(data.error || "Something went wrong.");
+      return;
+    }
+    setError("");
+    setInput("");
+    setTasks((prev) => [data.task, ...prev]);
+    setStats(data.stats);
+  };
+
+  const toggleTask = async (task) => {
+    const res = await fetch(`/api/tasks/${task.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ completed: !task.completed }),
+    });
+    const data = await res.json();
+    setTasks((prev) => prev.map((t) => (t.id === task.id ? data.task : t)));
+    setStats(data.stats);
+  };
+
+  const deleteTask = async (id) => {
+    const res = await fetch(`/api/tasks/${id}`, { method: "DELETE" });
+    const data = await res.json();
+    setTasks((prev) => prev.filter((t) => t.id !== id));
+    setStats(data.stats);
+  };
+
+  const filteredTasks = tasks.filter((t) => {
+    if (filter === "active") return !t.completed;
+    if (filter === "completed") return t.completed;
+    return true;
+  });
+
+  return (
+    <div className="max-w-xl mx-auto px-4 py-12">
+      <header className="mb-8">
+        <h1 className="text-2xl font-bold text-slate-800">TaskFlow</h1>
+        <p className="text-sm text-slate-500 mt-1">
+          Tip: words like "urgent" or "asap" auto-tag a task as High priority.
+        </p>
+      </header>
+
+      <div className="bg-white border border-slate-200 rounded-2xl p-5 mb-6">
+        <ProgressBar percentage={stats.percentage} completed={stats.completed} total={stats.total} />
+      </div>
+
+      <form onSubmit={addTask} className="flex gap-2 mb-2">
+        <input
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          placeholder="Add a task, e.g. 'Submit report ASAP'"
+          className="flex-1 border border-slate-300 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:border-transparent"
+        />
+        <button
+          type="submit"
+          className="bg-indigo-500 hover:bg-indigo-600 text-white text-sm font-semibold px-5 py-2.5 rounded-xl transition-colors"
+        >
+          Add Task
+        </button>
+      </form>
+      {error && <p className="text-rose-500 text-xs mb-4">{error}</p>}
+
+      <div className="flex gap-2 mb-4 mt-6">
+        {["all", "active", "completed"].map((f) => (
+          <button
+            key={f}
+            onClick={() => setFilter(f)}
+            className={`text-xs font-medium px-3 py-1.5 rounded-full border transition-colors ${
+              filter === f
+                ? "bg-slate-800 text-white border-slate-800"
+                : "bg-white text-slate-500 border-slate-200 hover:border-slate-300"
+            }`}
+          >
+            {f.charAt(0).toUpperCase() + f.slice(1)}
+          </button>
+        ))}
+      </div>
+
+      {loading ? (
+        <p className="text-sm text-slate-400 text-center py-10">Loading tasks…</p>
+      ) : filteredTasks.length === 0 ? (
+        <p className="text-sm text-slate-400 text-center py-10">No tasks here yet.</p>
+      ) : (
+        <ul className="space-y-2">
+          {filteredTasks.map((task) => (
+            <TaskRow key={task.id} task={task} onToggle={toggleTask} onDelete={deleteTask} />
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+</script>
+</body>
+</html>
