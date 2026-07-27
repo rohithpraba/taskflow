@@ -1,47 +1,45 @@
-"""
-TaskFlow API
-------------
-A small Flask REST backend for a task management app.
+"""TaskFlow API.
 
-Storage: in-memory (runtime persistence only), as required.
-
-Creative feature: Smart Priority Detection.
-When a task is created, its title is scanned for urgency signals
-(e.g. "urgent", "asap", "today", "deadline") and automatically
-tagged High / Medium / Low priority. This removes a manual step
-for the user and gives the board a lightweight "smart" feel
-without pretending to be a full ML model.
+A small Flask REST backend with in-memory storage and deterministic keyword-based
+priority scoring. Data resets whenever the process restarts.
 """
 
-from flask import Flask, jsonify, request, send_from_directory
+from __future__ import annotations
+
 from datetime import datetime, timezone
 from itertools import count
 import os
+from typing import Any
+
+from flask import Flask, jsonify, request, send_from_directory
 
 app = Flask(__name__, template_folder="templates")
 TEMPLATES_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "templates")
 
-# ---------------------------------------------------------------------------
-# In-memory storage
-# ---------------------------------------------------------------------------
-tasks: list[dict] = []
+tasks: list[dict[str, Any]] = []
 _id_counter = count(1)
 
-# ---------------------------------------------------------------------------
-# Smart Priority Detection (creative feature)
-# ---------------------------------------------------------------------------
 HIGH_PRIORITY_WORDS = {
-    "urgent", "asap", "today", "immediately", "critical", "deadline", "now",
+    "urgent",
+    "asap",
+    "today",
+    "immediately",
+    "critical",
+    "deadline",
+    "now",
 }
 MEDIUM_PRIORITY_WORDS = {
-    "soon", "tomorrow", "this week", "important", "priority",
+    "soon",
+    "tomorrow",
+    "this week",
+    "important",
+    "priority",
 }
 
 
 def detect_priority(title: str) -> str:
-    """Infer a priority level from keywords in the task title."""
+    """Return a deterministic priority label from title keywords."""
     text = title.lower()
-
     if any(word in text for word in HIGH_PRIORITY_WORDS):
         return "high"
     if any(word in text for word in MEDIUM_PRIORITY_WORDS):
@@ -49,47 +47,54 @@ def detect_priority(title: str) -> str:
     return "low"
 
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-def find_task(task_id: int) -> dict | None:
-    return next((t for t in tasks if t["id"] == task_id), None)
+def find_task(task_id: int) -> dict[str, Any] | None:
+    return next((task for task in tasks if task["id"] == task_id), None)
 
 
-def serialize_stats() -> dict:
+def serialize_stats() -> dict[str, int | float]:
     total = len(tasks)
-    completed = sum(1 for t in tasks if t["completed"])
+    completed = sum(1 for task in tasks if task["completed"])
     percentage = round((completed / total) * 100, 1) if total else 0.0
     return {"total": total, "completed": completed, "percentage": percentage}
 
 
-# ---------------------------------------------------------------------------
-# Routes: frontend
-# ---------------------------------------------------------------------------
-@app.route("/")
+def _json_object() -> tuple[dict[str, Any] | None, tuple[Any, int] | None]:
+    payload = request.get_json(silent=True)
+    if payload is None:
+        return None, (jsonify({"error": "Request body must be a JSON object."}), 400)
+    if not isinstance(payload, dict):
+        return None, (jsonify({"error": "Request body must be a JSON object."}), 400)
+    return payload, None
+
+
+@app.get("/")
 def index():
-    # Served as a raw static file (not through Jinja) because the page
-    # contains in-browser JSX with {{ }}-style syntax that Jinja would
-    # otherwise try (and fail) to parse.
     return send_from_directory(TEMPLATES_DIR, "index.html")
 
 
-# ---------------------------------------------------------------------------
-# Routes: API
-# ---------------------------------------------------------------------------
+@app.get("/health")
+def health():
+    return jsonify({"status": "ok", "storage": "in-memory"})
+
+
 @app.get("/api/tasks")
 def list_tasks():
-    """Return all tasks, newest first."""
-    ordered = sorted(tasks, key=lambda t: t["id"], reverse=True)
+    ordered = sorted(tasks, key=lambda task: task["id"], reverse=True)
     return jsonify({"tasks": ordered, "stats": serialize_stats()})
 
 
 @app.post("/api/tasks")
 def add_task():
-    """Create a new task. Body: { "title": str }"""
-    payload = request.get_json(silent=True) or {}
-    title = (payload.get("title") or "").strip()
+    payload, error = _json_object()
+    if error is not None:
+        return error
+    assert payload is not None
 
+    raw_title = payload.get("title")
+    if not isinstance(raw_title, str):
+        return jsonify({"error": "Task title must be a string."}), 400
+
+    title = raw_title.strip()
     if not title:
         return jsonify({"error": "Task title cannot be empty."}), 400
     if len(title) > 200:
@@ -107,15 +112,24 @@ def add_task():
 
 
 @app.patch("/api/tasks/<int:task_id>")
-def update_task(task_id):
-    """Toggle or set completion status. Body: { "completed": bool } (optional)."""
+def update_task(task_id: int):
     task = find_task(task_id)
     if task is None:
         return jsonify({"error": "Task not found."}), 404
 
-    payload = request.get_json(silent=True) or {}
+    if request.data:
+        payload, error = _json_object()
+        if error is not None:
+            return error
+        assert payload is not None
+    else:
+        payload = {}
+
     if "completed" in payload:
-        task["completed"] = bool(payload["completed"])
+        completed = payload["completed"]
+        if not isinstance(completed, bool):
+            return jsonify({"error": "completed must be a JSON boolean."}), 400
+        task["completed"] = completed
     else:
         task["completed"] = not task["completed"]
 
@@ -123,13 +137,12 @@ def update_task(task_id):
 
 
 @app.delete("/api/tasks/<int:task_id>")
-def delete_task(task_id):
-    global tasks
+def delete_task(task_id: int):
     task = find_task(task_id)
     if task is None:
         return jsonify({"error": "Task not found."}), 404
 
-    tasks = [t for t in tasks if t["id"] != task_id]
+    tasks.remove(task)
     return jsonify({"deleted": task_id, "stats": serialize_stats()})
 
 
@@ -138,6 +151,16 @@ def stats():
     return jsonify(serialize_stats())
 
 
+def _env_bool(name: str, default: bool = False) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
 if __name__ == "__main__":
-    # host=0.0.0.0 is required for the Replit preview link to work
-    app.run(host="0.0.0.0", port=8080, debug=True)
+    app.run(
+        host=os.getenv("HOST", "127.0.0.1"),
+        port=int(os.getenv("PORT", "8080")),
+        debug=_env_bool("FLASK_DEBUG", False),
+    )
