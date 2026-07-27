@@ -1,57 +1,58 @@
 # TaskFlow
 
-A minimal full-stack task manager: Flask REST API + a single-page React
-frontend (no build step — React and Tailwind are loaded via CDN and JSX is
-transpiled in-browser by Babel).
+> **Status:** Demonstration project. Tasks are stored in memory and reset when the server restarts.
 
-## Run locally / on Replit
+TaskFlow is a minimal task manager with a Flask REST API and a single-page React frontend. It assigns a transparent priority label from title keywords; the priority rule is deterministic and is not presented as a trained Machine Learning model.
+
+## Features
+
+- Create, list, update, and delete tasks through REST endpoints
+- Track completion statistics
+- Assign High, Medium, or Low priority from documented keywords
+- Validate JSON payloads and boolean completion values
+- Serve a lightweight browser interface without a frontend build step
+
+## Run locally
 
 ```bash
-pip install -r requirements.txt
+python -m venv .venv
+# Windows: .venv\Scripts\activate
+# macOS/Linux: source .venv/bin/activate
+python -m pip install -r requirements.txt
 python app.py
 ```
 
-Open http://localhost:8080 (or the Replit preview URL — the app already
-binds to `0.0.0.0:8080` so it works there out of the box).
+Open `http://127.0.0.1:8080`.
+
+Environment variables:
+
+```text
+HOST=127.0.0.1
+PORT=8080
+FLASK_DEBUG=false
+```
 
 ## API
 
-| Method | Route                  | Description                          |
-|--------|-------------------------|--------------------------------------|
-| GET    | `/api/tasks`            | List all tasks + progress stats      |
-| POST   | `/api/tasks`             | Create a task (`{ "title": str }`)  |
-| PATCH  | `/api/tasks/<id>`        | Toggle or set completion status      |
-| DELETE | `/api/tasks/<id>`        | Remove a task                        |
-| GET    | `/api/stats`             | Progress stats only                  |
+| Method | Route | Description |
+|---|---|---|
+| GET | `/health` | Basic process and storage status |
+| GET | `/api/tasks` | List tasks and completion statistics |
+| POST | `/api/tasks` | Create a task from `{ "title": "..." }` |
+| PATCH | `/api/tasks/<id>` | Toggle completion or set `{ "completed": true/false }` |
+| DELETE | `/api/tasks/<id>` | Delete a task |
+| GET | `/api/stats` | Return completion statistics |
 
-Storage is an in-memory Python list — data resets on server restart, as
-allowed by the spec.
+## Test
 
-## Creative feature: Smart Priority Detection
-
-Instead of a manual priority dropdown, `detect_priority()` in `app.py`
-scans each task title for urgency keywords ("urgent", "asap", "today",
-"deadline", etc. → **High**; "soon", "this week", "important" → **Medium**;
-otherwise **Low**) and tags the task automatically. It's a simple,
-transparent heuristic rather than a real ML model — chosen deliberately
-so it's honest about what it is, fast to build, and easy to extend later
-(e.g. swapping in a small classifier trained on real task data).
-
-## Structure
-
-```
-taskboard/
-├── app.py                # Flask backend + API routes
-├── requirements.txt
-└── templates/
-    └── index.html         # React frontend (CDN React/Babel/Tailwind)
+```bash
+python -m pip install -r requirements.txt -r requirements-dev.txt
+python -m pytest -q
 ```
 
-## Design notes
+## Limitations
 
-- The frontend is served as a static file (`send_from_directory`) rather
-  than through Jinja's `render_template`, since the page contains
-  in-browser JSX using `{}`/`{{}}` syntax that Jinja would otherwise try
-  to parse as its own template syntax.
-- Validation lives server-side (empty/overlong titles are rejected with
-  a 400), so the API is safe to call from any client, not just this UI.
+- No persistent database
+- No authentication or multi-user isolation
+- Intended for local demonstration, not production operation
+- React, Babel, and the styling library are loaded by the existing frontend from public CDNs
